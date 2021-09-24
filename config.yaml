@@ -1,0 +1,10 @@
+first_host: hostname.tld
+host_should_contain: .tld # This could be an internal/private dns tld
+host_groups:
+  other: 1 # This doesn't matter, unknown hosts set to 1 anyway.
+  cust: 4
+  isp: 2
+  core: 3
+  dist: 5
+  acc: 6
+snmp_community: SuperSecret

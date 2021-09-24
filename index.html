@@ -1,0 +1,268 @@
+<html>
+<head>
+  <script src="//d3js.org/d3.v4.min.js"></script>
+  <script src="//unpkg.com/vue"></script>
+</head>
+<body>
+
+ <div id="app">
+  <svg ref='nwmap' id='nwmap' :width="settings.svgWidth" :height="settings.svgHeight">
+          <g :id="links"/>
+          <g :id="nodes"/>
+        </svg>
+ </div>
+
+<script>
+new Vue({
+  el: "#app",
+  data: function() {
+    return {
+      highlight: null,
+      itemClicked: null,
+      devicedata: {},
+      devicegraphs: [],
+      devices: null,
+      graph: null,
+      simulation: null,
+      dataLoaded: false,
+      loadedIn: null,
+      settings: {
+        strokeColor: '#29B5FF',
+        width: 100,
+        svgWidth: 1500,
+        svgHeight: 1000
+      }
+    };
+  },
+  mounted: function () {
+    this.loadSwitchInfo()
+  },
+  computed: {
+    nodes: function () {
+      var that = this
+      if (that.graph) {
+        var svg = d3.select('svg#nwmap')
+        svg.style('border', '1px solid black')
+
+        var node = svg.selectAll('.node')
+          .data(that.graph.nodes)
+          .enter().append('g')
+          .attr('class', function(d) { return 'node n' + d.label })
+          .call(d3.drag()
+            .on('start', function dragstarted (d) {
+              if (!d3.event.active) that.simulation.alphaTarget(0.3).restart()
+              d.fx = d.x
+              d.fy = d.y
+            })
+            .on('drag', function dragged (d) {
+              d.fx = d3.event.x
+              d.fy = d3.event.y
+            })
+            .on('end', function dragended (d) {
+              if (!d3.event.active) that.simulation.alphaTarget(0)
+              d.fx = null
+              d.fy = null
+            }).bind(this))
+        
+        node.append('image')
+          .attr('class', 'node')
+          .attr('xlink:href', function (d) { return 'https://via.placeholder.com/'+d.size })
+          .attr('x', function (d) { return -(d.size / 2) })
+          .attr('y', function (d) { return -(d.size / 2) })
+          .attr('width', function (d) { return d.size })
+          .attr('height', function (d) { return d.size })
+        
+        node.append('text')
+          .attr('style', 'stroke:white;stroke-width:0.6em')
+          .attr('font-family', 'Verdana, Arial, Helvetica')
+          .attr('dx', function (d) { return -(d.label.length * 2) })
+          .attr('dy', function (d) { return (d.size / 2) + 15 })
+          .text(function (d) { return d.label })
+        node.append('text')
+          .attr('style', 'fill:black')
+          .attr('font-family', 'Verdana, Arial, Helvetica')
+          .attr('dx', function (d) { return -(d.label.length * 2) })
+          .attr('dy', function (d) { return (d.size / 2) + 15 })
+          .text(function (d) { return d.label })
+
+        node.on('click', function (d) {
+          if (that.dataLoaded) {
+            that.itemClicked = d
+            that.loadGraphs(d.information.hostname)
+            node.selectAll('.clickedRect').remove()
+            svg.selectAll('.n' + d.label)
+              .insert('rect', 'image')
+              .attr('class', 'clickedRect')
+              .attr('x', -((d.size + 2) / 2))
+              .attr('y', -((d.size + 2) / 2))
+              .attr('width', d.size + 2)
+              .attr('height', d.size + 2)
+              .attr('fill', 'red')
+            svg.selectAll('.tsrc-' + d.label)
+              .style('display', 'block')
+          }
+        })
+
+        node.on('mouseover', function (d) {
+          if (this.dataLoaded) {
+            svg.selectAll('.n' + d.label)
+              .style("cursor", "pointer")
+              .insert('rect', 'image')
+              .attr('class', 'hoverRect')
+              .attr('x', -((d.size + 10) / 2))
+              .attr('y', -((d.size + 10) / 2))
+              .attr('width', d.size + 10)
+              .attr('height', d.size + 10)
+              .attr('fill', 'red')
+          }
+        }.bind(this))
+        
+        node.on('mouseout', function (d) {
+          svg.selectAll('.src-' + d.label)
+            .style('display', 'none')
+          node.selectAll('.hoverRect').remove()
+        })
+
+        return node
+      }
+      return null
+    },
+    links: function () {
+      var that = this
+      if (that.graph) {
+        var svg = d3.select('svg#nwmap')
+        var links = svg.selectAll('.line')
+          .data(that.graph.links)
+          .enter().append('g')
+          .attr('class', 'link')
+        
+        links.append('line')
+          .style('stroke-width', function (d) { return Math.sqrt(d.value) })
+          .style('stroke', function (d) { return d.color })
+          .attr('x1', function (d) { return d.source.x })
+          .attr('y1', function (d) { return d.source.y })
+          .attr('x2', function (d) { return d.target.x })
+          .attr('y2', function (d) { return d.target.y })
+
+        return links
+      }
+      return null
+    }
+  },
+  methods: {
+    loadSwitchInfo () {
+      d3.json('output.json', function(err, graph)  {
+          this.graph = this.parseTopo(graph)
+          console.log(this.graph)
+          this.simulation = d3.forceSimulation(this.graph.nodes)
+            .force('link', d3.forceLink(this.graph.links)
+              .distance(100)
+              .strength(0.001))
+            .force('collide', d3.forceCollide(15).radius(function(d) { return d.size}))
+            .force('charge', d3.forceManyBody().strength(-300).distanceMax(500).distanceMin(50))
+            .force("x", d3.forceX(function(d){
+              return parseInt(d.group) * (this.settings.svgWidth - 128) / 6
+             }.bind(this)).strength(2))
+            .force("y", d3.forceY(function(d) {
+              if (d.heightThing === undefined) {
+                return this.settings.svgHeight/2
+              } else {
+                return parseInt(d.heightThing) * (this.settings.svgHeight - 128) / graph.nodes.filter(node => node.group === "5").length
+              }
+            }.bind(this)).strength(2))
+            .force("bounding", function () {
+              this.graph.nodes.forEach(function (k) {
+              }.bind(this))
+            }.bind(this))
+        }.bind(this))
+    },
+    parseTopo (graph) {
+      var data = {}
+      var numL5 = graph.nodes.filter(node => node.group === "5").length
+      var usedHeights = []
+      data.links = graph.links.map(function (value) {
+        var nodes = graph.nodes
+        var link = {}
+        link.type = value.type || 'default'
+        for (var i = 0; i < nodes.length; i++) {
+          if (nodes[i].label === value.a[0]) {
+            link.source = i
+            link.a = value.a[1]
+            link.src = value.a[0]
+            link.color = value.color
+            link.value = value.value
+          }
+          if (nodes[i].label === value.z[0]) {
+            link.target = i
+            link.z = value.z[1]
+            link.dst = value.z[0]
+          }
+        }
+        return link
+      })
+
+      var groupHeights = {}
+
+      // Give each group a height based on the number of items in the group
+      for(var i = 0; i <= 6; i++) {
+        groupHeights[i] = []
+        data.nodes = graph.nodes.map(function (value) {
+          if (value.group == i){
+            value.heightThing = groupHeights[i].length + 1
+            groupHeights[i].push(value.label)            
+          }
+          return value
+        })
+      }
+
+      // Since the last group is the largest and defined by the 'parent' link, 
+      // I tried to match them by looking over the links with the dst being the current
+      // link. 
+      data.nodes = graph.nodes.map(function (value) {
+        if (value.group === "6") {
+          // Find parent link
+          var matchingLink = data.links.filter(l => l.dst === value.label)[0]
+
+          //Set height to parent height
+          value.heightThing = data.nodes[matchingLink.source].heightThing || 0
+        }
+        return value
+      })
+      return data
+    },
+    xpos (s, t) {
+      var angle = Math.atan2(t.y - s.y, t.x - s.x)
+      return 1.5 * s.size * Math.cos(angle) + s.x
+    },
+    ypos (s, t) {
+      var angle = Math.atan2(t.y - s.y, t.x - s.x)
+      return 1.5 * s.size * Math.sin(angle) + s.y
+    }
+  },
+  updated: function () {
+    var that = this
+    if (this.simulation) {
+      this.simulation.nodes(this.graph.nodes).on('tick', function ticked () {
+        this.links.selectAll('line')
+          .attr('x1', function (d) { return d.source.x })
+          .attr('y1', function (d) { return d.source.y })
+          .attr('x2', function (d) { return d.target.x })
+          .attr('y2', function (d) { return d.target.y })
+        this.links.selectAll('.aEnd')
+          .attr('x', function (d) { return that.xpos(d.source, d.target) })
+          .attr('y', function (d) { return that.ypos(d.source, d.target) })
+        this.links.selectAll('.zEnd')
+          .attr('x', function (d) { return that.xpos(d.target, d.source) })
+          .attr('y', function (d) { return that.ypos(d.target, d.source) })
+        this.nodes
+          .attr('transform', function (d) {
+            return 'translate(' + d.x + ',' + d.y + ')'
+          })
+      }.bind(this))
+    }
+  }
+});
+ 
+</script>
+</body>
+</html>
